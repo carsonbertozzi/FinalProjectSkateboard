@@ -3,6 +3,10 @@
 #include "ADC.h"
 #include "USB_UART.h"
 #include <stdio.h>
+#define PWM_MIN 12000
+#define PWM_MAX 22200
+#define WEIGHT_SPLIT_MIN -.7
+#define WEIGHT_SPLIT_MAX .7
 
 /**
  * main.c
@@ -16,8 +20,11 @@ uint16_t sampled_flag;
 
 void main(void)
 {
-    uint16_t back_input, front_input, mod_throttle_diff;
-    int weight_diff;
+    uint16_t back_input, front_input, pwm_output;
+    float weight_split, slope = 1.0 * (PWM_MAX - PWM_MIN) / (WEIGHT_SPLIT_MAX - WEIGHT_SPLIT_MIN);
+
+//    uint16_t mod_throttle_diff;
+//    int weight_diff;
     WDT_A->CTL = WDT_A_CTL_PW | WDT_A_CTL_HOLD;     // stop watchdog timer
     setDCO(FREQ_12MHz);
 
@@ -60,33 +67,55 @@ void main(void)
         if (sampled_flag){
             //the flags ensure that the data is only edited all in one go,
             //instead of potentially sporadically changing based whenever
-            //throttleDiff and turnDiff are changed
 
-            //4600 is roughly the # of clock cycles of the midpoint
-            //for the turn pmw from the receiver
+            weight_split = (float)(front_input - back_input) / (front_input + back_input);
 
-            //the range of clock cycles the turn yields is roughly 4600 +/- 1500
+            if (weight_split > WEIGHT_SPLIT_MAX){
+                weight_split = WEIGHT_SPLIT_MAX;
+            }
 
-            mod_throttle_diff = throttle_diff - 11000;//makes throttle input a range from 0-10000
-            weight_diff = (((((front_input - back_input) * 100) / (front_input + back_input)) + 17) * 150); //ask vishnu to see the picture on his phone
-            //above is a transformation that accepts all weight and converts the ADC difference values to between 0-10000
-            if (front_input + back_input < 1000){
+            else if (weight_split < WEIGHT_SPLIT_MIN){
+                weight_split = WEIGHT_SPLIT_MIN;
+            }
+
+            pwm_output = (int)PWM_MIN + slope * (weight_split - WEIGHT_SPLIT_MIN);
+
+            if (front_input + back_input < 1000){ //sets a minimum weight threshold
                 TIMER_A0->CCR[1] = 18000;
             }
-            else if (weight_diff < 0){
-                TIMER_A0->CCR[1] = 12500;
-            }
-            else if (mod_throttle_diff > weight_diff){
-               TIMER_A0->CCR[1] = weight_diff + 12000;
+
+            else if (throttle_diff > pwm_output){
+                TIMER_A0->CCR[1] = pwm_output;
             }
 
-            else {
+            else{
                 TIMER_A0->CCR[1] = throttle_diff;
             }
+
+
+
+//            mod_throttle_diff = throttle_diff - 11000;//makes throttle input a range from 0-10000
+//            weight_diff = (((((front_input - back_input) * 100) / (front_input + back_input)) + 17) * 150); //ask vishnu to see the picture on his phone
+//            //above is a transformation that accepts all weight and converts the ADC difference values to between 0-10000
+//            if (front_input + back_input < 1000){
+//                TIMER_A0->CCR[1] = 18000;
+//            }
+//            else if (weight_diff < 0){
+//                TIMER_A0->CCR[1] = 12500;
+//            }
+//            else if (mod_throttle_diff > weight_diff){
+//               TIMER_A0->CCR[1] = weight_diff + 12000;
+//            }
+//
+//            else {
+//                TIMER_A0->CCR[1] = throttle_diff;
+//            }
+
+
             //giveUARTInt(throttle_diff);
             //giveUARTString(" ");
-            giveUARTInt(weight_diff);
-            giveUARTString("\r");
+            //giveUARTInt(weight_diff);
+            //giveUARTString("\r");
 
             sampled_flag = 0;
 
