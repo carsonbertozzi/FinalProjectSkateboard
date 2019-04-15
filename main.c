@@ -5,8 +5,10 @@
 #include <stdio.h>
 #define PWM_MIN 12000
 #define PWM_MAX 22200
-#define WEIGHT_SPLIT_MIN -.7
-#define WEIGHT_SPLIT_MAX .7
+#define WEIGHT_SPLIT_MIN -.55
+#define WEIGHT_SPLIT_MAX .35
+#define MAX_DIFF_ACCEL 65
+#define MAX_DIFF_DECEL 80
 
 /**
  * main.c
@@ -20,8 +22,14 @@ uint16_t sampled_flag;
 
 void main(void)
 {
-    uint16_t back_input, front_input, pwm_output;
+    uint16_t back_input, front_input, calc_pwm_output, prev_pwm_output = PWM_MIN;
     float weight_split, slope = 1.0 * (PWM_MAX - PWM_MIN) / (WEIGHT_SPLIT_MAX - WEIGHT_SPLIT_MIN);
+
+    /*pin to toggle for debugging*/
+//    P2->DIR |= BIT7;
+//    P2->SEL0 &= ~(BIT7);
+//    P2->SEL1 &= ~(BIT7);
+//    P2->OUT &= ~(BIT7);
 
 //    uint16_t mod_throttle_diff;
 //    int weight_diff;
@@ -32,7 +40,9 @@ void main(void)
 
     USB_UARTInit();
 
-
+    /* Timer input capture pins
+     * P2.6 is capture, P2.4 is PWM out for V-Controllers
+     */
     P2->SEL0 |= (BIT6 | BIT4); //setting throttle and turning inputs
     P2->SEL1 &= ~(BIT6);
     P2->DIR &= ~(BIT6);
@@ -53,15 +63,11 @@ void main(void)
 
     while(1){
 
-        ADC14->CTL0 |= ADC14_CTL0_SC; //gets one back_input
+        ADC14->CTL0 |= ADC14_CTL0_SC; //gets one front and back input
         while (!getADCFlag());
         clearADCFlag();
         back_input = getADCSample();
         front_input = getADCSample_1();
-//        giveUARTInt(sample);
-//        giveUARTString(" ");
-//        giveUARTInt(front_input);
-//        giveUARTString("\r");
 
 
         if (sampled_flag){
@@ -78,45 +84,30 @@ void main(void)
                 weight_split = WEIGHT_SPLIT_MIN;
             }
 
-            pwm_output = (int)PWM_MIN + slope * (weight_split - WEIGHT_SPLIT_MIN);
+            calc_pwm_output = (int)PWM_MIN + slope * (weight_split - WEIGHT_SPLIT_MIN);
+            if (calc_pwm_output > prev_pwm_output + MAX_DIFF_ACCEL){
+                calc_pwm_output = prev_pwm_output + MAX_DIFF_ACCEL;
+            }
+
+
+            else if (calc_pwm_output < prev_pwm_output - MAX_DIFF_DECEL){
+                calc_pwm_output = prev_pwm_output - MAX_DIFF_DECEL;
+            }
 
             if (front_input + back_input < 1000){ //sets a minimum weight threshold
                 TIMER_A0->CCR[1] = 18000;
+                calc_pwm_output = 18000;
             }
 
-            else if (throttle_diff > pwm_output){
-                TIMER_A0->CCR[1] = pwm_output;
+            else if (throttle_diff > calc_pwm_output){
+                TIMER_A0->CCR[1] = calc_pwm_output;
             }
 
             else{
                 TIMER_A0->CCR[1] = throttle_diff;
             }
 
-
-
-//            mod_throttle_diff = throttle_diff - 11000;//makes throttle input a range from 0-10000
-//            weight_diff = (((((front_input - back_input) * 100) / (front_input + back_input)) + 17) * 150); //ask vishnu to see the picture on his phone
-//            //above is a transformation that accepts all weight and converts the ADC difference values to between 0-10000
-//            if (front_input + back_input < 1000){
-//                TIMER_A0->CCR[1] = 18000;
-//            }
-//            else if (weight_diff < 0){
-//                TIMER_A0->CCR[1] = 12500;
-//            }
-//            else if (mod_throttle_diff > weight_diff){
-//               TIMER_A0->CCR[1] = weight_diff + 12000;
-//            }
-//
-//            else {
-//                TIMER_A0->CCR[1] = throttle_diff;
-//            }
-
-
-            //giveUARTInt(throttle_diff);
-            //giveUARTString(" ");
-            //giveUARTInt(weight_diff);
-            //giveUARTString("\r");
-
+            prev_pwm_output = calc_pwm_output;
             sampled_flag = 0;
 
         }
